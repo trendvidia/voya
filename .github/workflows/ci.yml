@@ -1,0 +1,324 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  # Deliberately unfiltered by base branch: voya's work lands in stacked PRs
+  # whose base is another feature branch, and a filter on [main] would leave
+  # every child in a stack untested.
+  #
+  # `edited` is not in the default set (opened, synchronize, reopened) and is
+  # the event that matters most for a stack: when a parent merges, GitHub
+  # retargets each child's base onto main and fires `edited` with
+  # `changes.base`. Without it the child's merge ref silently resolves against
+  # a different base, and its last green check describes a merge that no
+  # longer exists. The cost is a re-run on title/body edits, bounded by the
+  # concurrency group below.
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Stacked PRs multiply runs: pushing to a parent re-triggers every child in the
+# stack. Supersede a ref's own in-flight run rather than queueing behind it.
+# main is never cancelled — its runs are the record of what landed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every job runs on GitHub-hosted runners, on purpose. This repository is
+# public, so a pull request from a fork runs the workflow it carries, and on a
+# self-hosted runner that is a stranger's code on a real machine. Do not add
+# one back: `make workflow-check` refuses any runner it cannot show is hosted
+# (#324). Actions are pinned by commit for the same reason.
+jobs:
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    # Higher than the other jobs: compiling the dependency tree under -race
+    # from a cold build cache is minutes, once. Warm runs are far under this.
+    # The tree was 350 modules when this number was chosen; chameleon v0.23.0
+    # took it to 64 (#28), so the headroom is now generous rather than needed.
+    # Left as is deliberately — a cold -race build on a shared runner is the
+    # case this guards, and it is not the case anyone measures.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is not decoration: voya is a laptop tool, and ADR 002's sharp
+        # edges (loopback behaviour, the /etc/resolver + cgo resolver trap)
+        # are macOS-specific. It also runs the only GNU Make 3.81 in the
+        # matrix, which is the split this repo's Makefile header is about.
+        include:
+          - name: linux
+            runs-on: ubuntu-latest
+          - name: macos
+            runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Since #240, require-check verifies intra-repo requires against
+          # origin's live tag list (`git ls-remote`), and this checkout's tag
+          # set no longer decides that check: a partly-fetched workspace
+          # cannot false-fail it and a shallow one cannot starve it (#232's
+          # fail-closed refusal now guards the remote being tagless, not the
+          # fetch). Depth 0 stays anyway: #238 is the record of what a shallow
+          # workspace cost to diagnose.
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      # These go through make rather than inline `go` commands so that the
+      # module walk has exactly one definition. Inlined, CI and the Makefile
+      # drift apart while README calls `make ci` "what CI runs" — and the
+      # Makefile's own failure-propagation fix (see its header comment) would
+      # never be exercised by CI, which is where a silent `make test` exit 0
+      # would do the most damage. `make vet` and `make test` cover both
+      # modules, test/trailer included, so ADR 003's trailer evidence runs
+      # here without a hand-maintained second list.
+      - name: modules-check (MODULES vs go.work)
+        run: make modules-check
+      # The third copy of the chain is this file's step list; the second is
+      # CLAUDE.md's listing, which this gates against `ci:` (#279). Costs a
+      # sed and an awk, so it sits with the other cheap consistency legs
+      # rather than behind the builds.
+      - name: ci-listing-check (CLAUDE.md's ci chain vs the ci target)
+        run: make ci-listing-check
+      # And this one closes the loop on the third copy (#284): every `ci:` leg
+      # must appear here as `make <name>`, or be in the Makefile's
+      # CI_YML_EXEMPT with its reason. Without it a leg reaches `ci:` and
+      # CLAUDE.md, passes every gate, and never runs — which is what makes
+      # this file the consequential copy rather than the last one. It also
+      # reads every workflow's `runs-on` (#324): see the note above `jobs:`.
+      - name: workflow-check (every ci leg has a step here, every runner is hosted)
+        run: make workflow-check
+      # The three above check that each leg *runs*. This one checks that a leg
+      # still runs the command its argument depends on (#286): several were
+      # deliberately widened past `go build` — because it compiles no _test.go
+      # — and until now narrowing one back left CI green with the leg quietly
+      # guarding less. It reads the Makefile only, so it costs nothing and
+      # belongs here, before anything it describes has run and been believed.
+      - name: recipe-check (each gate still runs the command it argues for)
+        run: make recipe-check
+      # Before the module-graph legs deliberately (#247): an ordinary compile
+      # error then surfaces here as itself, rather than five steps down as
+      # install-check's sibling-tag failure. Only as far as it compiles —
+      # cmd/voya's import closure, this runner's GOOS.
+      - name: build
+        run: make build
+      # The rest of what `build` does not reach (#255): every package of
+      # every module, inside the workspace, so a compile error in a root
+      # package outside cmd/voya's closure is named here as one. Test files
+      # included (#271): `go list -test -export` compiles the test variants
+      # too, without linking, so an error in a _test.go file fails here under
+      # a `[pkg.test]` heading instead of reaching install-check's `go vet`
+      # and printing under the sibling-tag heading. Then `go build -o
+      # /dev/null ./...` runs the link stage the listing skips (#276), so a
+      # `main` package without `func main()` fails here rather than in
+      # `cross` — the root module's three are the only `main` packages any
+      # module has, so that is where the coverage lands. What still gets past
+      # it is a file behind a build constraint this runner does not satisfy —
+      # another GOOS, or cgo, since the leg runs CGO_ENABLED=0. It lands on
+      # install-check's GOOS loop, test file or not: that loop vets rather
+      # than builds since #267, so it types the root module's constrained
+      # test files for every target, and its message hedges back on this step.
+      - name: compile-check (every module's packages compile, test files included; the root's main packages link)
+        run: make compile-check
+      # Every other step here runs inside the workspace, where go.work.sum
+      # covers for an incomplete go.sum. This is the one step that builds the
+      # modules the way `go install` will: without it, a go.sum missing its
+      # dependencies' /go.mod hashes ships green.
+      - name: tidy-check (go.mod/go.sum outside the workspace)
+        run: make tidy-check
+      # tidy-check's blind spot (#265): a module that requires an older
+      # version of a shared dependency than the workspace's build list selects
+      # is tidy GOWORK=off, and so is the sibling that moved on — #262 fixed
+      # three such requires by hand, and nothing here would have noticed them
+      # regressing. This step runs `go work sync` against a backup and fails
+      # on the diff, so the siblings stay on the version `make test` ran
+      # against rather than an older minimum that happened to satisfy MVS.
+      - name: sync-check (go work sync would rewrite nothing)
+        run: make sync-check
+      # For client and test/trailer, tidy-check sees their replaces and
+      # go.work covers everything else, so neither notices an intra-repo
+      # require naming a version no tag provides — the shape of #226, visible
+      # only to a consumer. This is the step that fails on it, straight
+      # against origin's tag list. The root module lost its replaces in
+      # #231, so tidy-check now resolves its requires for real and would fail
+      # on one first; this step still names which require and why.
+      - name: require-check (intra-repo requires vs tags)
+        run: make require-check
+      # require-check proves the tags exist; tidy-check resolves them without
+      # compiling. Neither sees a tag that exists but is stale against the
+      # working tree — the gap #235's go.mod comment warns about, whose worst
+      # case is `go install` shipping a daemon built on old bindings while CI
+      # is green (#237). This step type-checks the root module, test files
+      # included (#246), against the published sibling tags — for this
+      # runner's GOOS, then the same vet for every cross target, test files
+      # included there too since #267, because a build-constrained file is
+      # invisible to the host pass and `cross` re-measures the working tree,
+      # not the tags (#247) — and runs
+      # internal/config's parse tests against the tag's
+      # bindings, since a schema field set in layers/base.pxf has no
+      # compile-visible face at all. Red here with the workspace build green
+      # means a sibling moved past its tag, and the fix spans two PRs — land
+      # the sibling, have the tag cut on main, then land the require bump with
+      # the root code that needs it. The Makefile target's comment records
+      # which edge it still does not reach.
+      - name: install-check (root module vs published sibling tags)
+        run: make install-check
+      # install-check's question, asked of every module that is tagged on
+      # origin and requires a sibling, replace or not — today client: its
+      # go.mod requires proto by tag, and every build in this repo — the
+      # workspace legs through go.work's `use`, tidy-check through its
+      # replace — reads the working tree; only a consumer's `go get` reads
+      # the tag. This step compiles each such module through a copy of its
+      # go.mod with any replaces dropped, GOWORK=off, which is the consumer's
+      # resolution; which modules is derived from origin's tags, not listed
+      # (#267, widened from replaces-a-sibling to requires-one in #275). Red
+      # here with the workspace green means the module uses something the
+      # required sibling tag does not have (#230); the fix spans two PRs, and
+      # the Makefile target's comment says which order.
+      - name: client-check (tagged modules vs the sibling tags they require)
+        run: make client-check
+      # The same question, asked of test/acceptance: its go.mod requires all
+      # four siblings by version and replaces every one of them, so the suite
+      # — the largest consumer of client and authn here — compiles only
+      # against the working tree, and #246's divergence went green the day
+      # #236 moved ratelimit_test.go behind those replaces. This step
+      # type-checks the suite through a copy of its go.mod with the three
+      # sibling replaces dropped (the root's stays: nothing publishes it),
+      # GOWORK=off, so the versions it names are the ones it compiles against
+      # (#270). Red here with vet green means the suite's go.mod is behind
+      # what its code needs; the Makefile target's comment says which way.
+      - name: acceptance-check (test/acceptance vs the sibling tags it requires)
+        run: make acceptance-check
+      # Catches only what would vanish silently at release time — a fragment
+      # in a directory that is not a category, or an empty one. Whether a
+      # change needs a fragment at all is a review question.
+      - name: changelog-check (changelog.d fragments)
+        run: make changelog-check
+      - name: vet (all modules)
+        run: make vet
+      # ADR 003's trailer conclusion is version-bound and `1.26.x` above floats
+      # the patch deliberately, so the log has to record which toolchain the
+      # evidence was actually taken on.
+      - name: test (race detector, all modules)
+        run: |
+          go version
+          make test
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      # v9, not v7. Upstream's compatibility table reads "v7.0.0 supports
+      # golangci-lint v2 only" with v8 the entry that raises the floor to
+      # >= v2.1.0 — v7 predates the version pinned here. v7 also still runs on
+      # the deprecated node20 runtime; v9 is the node24 line.
+      #
+      # This is the one target CI does not reach through make: the action
+      # supplies the lint cache and the inline PR annotations that `make lint`
+      # cannot. `make lint` walks MODULES; these steps are the second, hand-
+      # maintained copy of that list, which is why `make modules-check` says so
+      # when it fails. v8+ reports absolute paths under `working-directory`;
+      # the `path:` exclusions in .golangci.yml are unanchored regexps, so they
+      # match either way. The rule that was confirmed against both modes was
+      # test/trailer's SA1019 pin, which #21 retired — `_test\.go$` is what
+      # governs this second invocation now, unanchored for the same reason.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+      - name: golangci-lint (authn)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          working-directory: authn
+      - name: golangci-lint (client)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          working-directory: client
+      - name: golangci-lint (examples)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          working-directory: examples
+      - name: golangci-lint (proto)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          working-directory: proto
+      - name: golangci-lint (acceptance suite)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          working-directory: test/acceptance
+      - name: golangci-lint (trailer harness)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        with:
+          version: v2.12.2
+          working-directory: test/trailer
+
+  proto:
+    name: proto
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # `make proto-breaking` compares against origin/main, and buf reads
+          # that ref out of .git rather than from a worktree. The default
+          # depth-1 checkout has no origin/main to compare against at all,
+          # which the target reports rather than letting buf call it a
+          # malformed input.
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      # No buf setup action: the Makefile `go install`s buf and both plugins
+      # at pinned versions into ./bin. The plugin version decides the bytes
+      # of the generated output, so an action's floating default would make
+      # the check below fail — or worse, pass on a diff nobody can reproduce
+      # locally. One pin, in the Makefile, for CI and laptops alike.
+      - name: proto lint
+        run: make proto-lint
+      # voya.registry.v1 is a cross-repo contract — every service links the
+      # generated registration client (ADR 004) — so a renumbered field or a
+      # changed type has to fail here rather than at the caller. proto-check
+      # cannot stand in for this: it asserts the bindings match the .proto,
+      # and they do, because the generator reproduces a break faithfully.
+      - name: proto breaking-change check
+        run: make proto-breaking
+      # The bindings are committed because `go install` runs no generator
+      # (ADR 001). This is what keeps them honest: regenerate, and fail if
+      # the working tree moved.
+      - name: generated bindings are current
+        run: make proto-check
+
+  cross:
+    name: cross-compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      # ADR 001 claims voya goes anywhere Go cross-compiles, Windows included.
+      # This is what keeps the claim honest as the code grows.
+      - name: build every target
+        run: make cross

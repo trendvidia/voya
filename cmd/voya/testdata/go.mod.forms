@@ -1,0 +1,36 @@
+// Not a go.mod any build uses: the corpus for the directive detector's arms
+// that no real file in this repository exercises. go.mod.pre-231 next to it is
+// the real pre-#231 root module and covers `replace` in block form; this one
+// covers the rest, so that each arm of moduleDirectives has an input that
+// fails when the arm stops matching.
+//
+// The single-line `replace` is client/go.mod's, verbatim — the form `go mod
+// edit -replace` writes, and so the likeliest way one comes back here. The
+// `exclude`s are made up because nothing in the repo has ever carried one,
+// and they are half of what `go install pkg@version` refuses.
+module github.com/trendvidia/voya/testdata/forms
+
+go 1.26.5
+
+require (
+	connectrpc.com/connect v1.20.0
+	// A module path that starts with a directive name, which the detector's
+	// prefix guard has to let through: no space, no tab, no `(` after it.
+	replaced.example/pinned v1.4.0
+	excludes.example/decoy v0.9.0
+)
+
+// A directive in prose, cut with the rest of the comments before matching:
+// replace github.com/trendvidia/voya/proto => ../proto is what this paragraph
+// is about, and a check that matched it would fail on every explanation.
+replace github.com/trendvidia/voya/proto => ../proto
+
+exclude google.golang.org/protobuf v1.36.10
+
+exclude (
+	// A comment line inside a block, which is the case the detector cuts
+	// comments for: the block arm reports every line it sees, so without the
+	// cut this paragraph becomes three directives named after itself.
+	golang.org/x/net v0.56.0
+	golang.org/x/text v0.39.0 // and a trailing one, which would ride along
+)

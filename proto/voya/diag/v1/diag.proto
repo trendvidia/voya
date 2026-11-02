@@ -1,0 +1,195 @@
+syntax = "proto3";
+
+package voya.diag.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/trendvidia/voya/proto/voya/diag/v1;diagv1";
+
+// DiagService is voya describing itself. Served by the daemon under the
+// reserved voya.internal authority on the proxy port (ADR 005), so that
+// tooling reads what voya knows instead of scraping CLI output. Nothing can
+// register voya.internal — registry.ValidName refuses it — so a request
+// there is voya's own to answer.
+//
+// The package is decided once and landed once (#149): under
+// `proto-breaking`'s FILE rule set the first landing is effectively final,
+// so the RPCs, the messages and the two report shapes the CLIs render are
+// all here, ahead of the commands that consume them.
+service DiagService {
+  // GetStatus is what `voya status` prints: voya itself, every registered
+  // service, and the after-the-fact record of evictions and reclaims that
+  // ADR 002 promises at every log level. Reads memory only; must stay
+  // instant and infallible (ADR 005).
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  // ListRoutes is the routing table: authority -> service -> upstream.
+  rpc ListRoutes(ListRoutesRequest) returns (ListRoutesResponse);
+  // ListRequests reads the bounded request ring buffer (ADR 005), oldest
+  // first. Empty until the buffer lands (#150).
+  rpc ListRequests(ListRequestsRequest) returns (ListRequestsResponse);
+  // WatchRequests streams each request as it is recorded, from the moment
+  // of the call, until the client goes away — `voya log -f` (#159). It
+  // never replays the buffer; a follower that wants history calls
+  // ListRequests first. Nothing is served until #150 lands.
+  rpc WatchRequests(WatchRequestsRequest) returns (stream WatchRequestsResponse);
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+  Self self = 1;
+  // Sorted by name, as registry.Services() is.
+  repeated Service services = 2;
+  // registry.Evictions(), oldest first.
+  repeated Eviction evictions = 3;
+  // registry.Reclaims(), oldest first.
+  repeated Reclaim reclaims = 4;
+}
+
+// Self is the daemon answering.
+message Self {
+  int32 pid = 1;
+  google.protobuf.Timestamp started_at = 2;
+  uint32 proxy_port = 3;
+  uint32 dns_port = 4;
+  uint32 registration_port = 5;
+  // What `voya version` prints.
+  string version = 6;
+}
+
+// Service is one live registration.
+message Service {
+  // "payments", never the authority.
+  string name = 1;
+  // "payments.internal".
+  string authority = 2;
+  // The registered ephemeral port.
+  uint32 port = 3;
+  // 0 when the registration carried none.
+  int32 pid = 4;
+  // registry.Upstream.Since — the uptime column.
+  google.protobuf.Timestamp since = 5;
+  StreamState stream = 6;
+}
+
+// StreamState is what routing acts on (ADR 004): the registration stream is
+// the liveness signal. Deliberately not a health verdict — ADR 005 keeps the
+// two as distinct columns because their disagreement is the diagnosis.
+//
+// One live value on purpose: the registry models liveness as presence, and a
+// deposed instance is gone from Services(), not "detached". The enum exists
+// so that a richer state — reclaiming, keepalive-late — is an added value
+// later, not a renamed field; adding enum values is FILE-safe.
+enum StreamState {
+  STREAM_STATE_UNSPECIFIED = 0;
+  // Registered, stream open — routable.
+  STREAM_STATE_ATTACHED = 1;
+}
+
+// Instance names one running copy of a service, the way an announcement
+// does: port, and pid when the registration carried one.
+message Instance {
+  string name = 1;
+  uint32 port = 2;
+  int32 pid = 3;
+}
+
+// Eviction is one instance losing its name to another (ADR 002).
+message Eviction {
+  Instance evicted = 1;
+  Instance incoming = 2;
+  google.protobuf.Timestamp at = 3;
+}
+
+// Reclaim is a deposed instance taking its name back after whoever deposed
+// it went away (#27). evicted_at is unset when the reclaim followed no
+// recorded eviction.
+message Reclaim {
+  Instance instance = 1;
+  google.protobuf.Timestamp evicted_at = 2;
+  google.protobuf.Timestamp at = 3;
+}
+
+message ListRoutesRequest {}
+
+message ListRoutesResponse {
+  repeated Route routes = 1;
+}
+
+// Route is one row of the routing table.
+message Route {
+  // "payments.internal".
+  string authority = 1;
+  // "payments".
+  string service = 2;
+  // "127.0.0.1:54321".
+  string upstream = 3;
+}
+
+message ListRequestsRequest {
+  // 0 = everything the buffer holds.
+  uint32 limit = 1;
+}
+
+message ListRequestsResponse {
+  repeated Request requests = 1;
+}
+
+message WatchRequestsRequest {}
+
+message WatchRequestsResponse {
+  Request request = 1;
+}
+
+// Request is one line of ADR 005's request log: timestamp, authority,
+// method, path, status, duration, upstream port, and the log's own count of
+// the record. Metadata only — voya reads no payloads (ADR 003).
+message Request {
+  google.protobuf.Timestamp at = 1;
+  string authority = 2;
+  string method = 3;
+  string path = 4;
+  // The routing status voya wrote, or the upstream's.
+  int32 status = 5;
+  google.protobuf.Duration duration = 6;
+  // 0 when voya answered without forwarding.
+  uint32 upstream_port = 7;
+  // The record's place in the daemon's log: a per-daemon counter, assigned
+  // as the record is appended to the buffer, starting at 1 so that 0 means
+  // a daemon that predates the field rather than its first record (#191).
+  // It is what `voya log -f` tells two records apart by — the timestamp
+  // cannot, on a clock coarser than the gap between two requests. It counts
+  // what the daemon recorded, not what one client was served: WatchRequests
+  // skips no number, because a follower it cannot keep up with is ended with
+  // resource_exhausted rather than served a thinned stream, while a jump
+  // between two ListRequests calls is what the buffer overwrote in between.
+  // Restarting voya restarts the count, like the log it counts.
+  uint64 sequence = 8;
+}
+
+// The report shape below is one a CLI renders as pxf, kept in this package so
+// it is decided with the RPCs (ADR 005, amendment #102). It is not served by
+// DiagService: health's Check calls run in the CLI process.
+
+// HealthReport is what `voya health` renders.
+message HealthReport {
+  repeated ServiceHealth services = 1;
+}
+
+// ServiceHealth is one service's grpc.health.v1 answer beside its registry
+// entry.
+message ServiceHealth {
+  // The registry entry it sits beside.
+  Service service = 1;
+  // The service's own answer — the grpc.health.v1 ServingStatus name,
+  // lower-cased ("serving", "not_serving", "unknown") — or one of four
+  // words that are not a verdict: "timeout" (accepted, and did not answer
+  // within the bound), "unreachable" (voya could not reach the registered
+  // port), "throttled" (its own limiter shed the probe), "error" (reached,
+  // and answered no verdict).
+  string status = 2;
+  // Why, when there is one: voya's own diagnostic for "unreachable", the
+  // Connect code and message for "throttled" and "error"; empty otherwise.
+  string detail = 3;
+}

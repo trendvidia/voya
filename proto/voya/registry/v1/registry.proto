@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package voya.registry.v1;
+
+option go_package = "github.com/trendvidia/voya/proto/voya/registry/v1;registryv1";
+
+// RegistrationService is how a service tells voya where it is listening.
+//
+// The stream is the liveness signal (ADR 004). There is no polling, no
+// health probe, and no TTL: when the stream closes for any reason, voya
+// evicts the service immediately, and when voya restarts every stream
+// breaks and the services re-register on their own.
+service RegistrationService {
+  // Register opens the long-lived registration stream. The client sends
+  // exactly one RegisterRequest and then holds the stream open for the
+  // lifetime of the process, reading responses until it exits or is
+  // evicted.
+  //
+  // Bidirectional rather than client-streaming because the interesting
+  // traffic runs server-to-client: the acknowledgement a developer reads
+  // at startup, and the eviction notice that explains why a live instance
+  // just lost its name.
+  rpc Register(stream RegisterRequest) returns (stream RegisterResponse);
+}
+
+// RegisterRequest is the single message a service sends when it opens the
+// stream.
+message RegisterRequest {
+  // The service's name, matching FLY_APP_NAME in production — "payments",
+  // not "payments.internal". voya derives the authority it routes on by
+  // appending .internal, so this is the one field that has to agree
+  // between the two environments.
+  string service = 1;
+
+  // The port the service actually bound. Services bind port 0 and let the
+  // OS assign, which is what removes local port collision (ADR 002); this
+  // is the resulting port, not the one it asked for.
+  uint32 port = 2;
+
+  // The registering process's PID, as the client states it. voya cannot read
+  // the peer's PID off a loopback connection portably, so nothing checks it.
+  //
+  // It does two things. ADR 002's evict-and-replace policy requires the
+  // warning to name both the evicted and the incoming instance, and a
+  // developer who has two builds of the same service running needs
+  // something they can act on. And with the port, it recognises a service
+  // reconnecting, which is not an eviction. It decides nothing else: the
+  // holder's pid on any other port is an eviction like any other (#308).
+  // Zero when the client declines to, which gives up the reconnect case.
+  int32 pid = 3;
+
+  // Register only if the name is unheld: voya refuses instead of evicting
+  // whoever holds it.
+  //
+  // This is how an evicted instance asks for its name back without starting
+  // the fight the eviction ended (#27). Ordinary registration is
+  // last-writer-wins by design (ADR 002) — a service restarting must take
+  // its name back from the copy that has not finished dying. A *deposed*
+  // instance retrying has the opposite need: if someone else is serving, it
+  // must lose, or the two trade the name forever at whatever interval they
+  // retry on.
+  bool only_if_unclaimed = 4;
+}
+
+// RegisterResponse is a server-to-client event on the stream.
+//
+// A oneof rather than flat fields: the client's read loop switches on what
+// happened, and "the stream ended" has to be distinguishable from "you were
+// deposed" — see Evicted.
+message RegisterResponse {
+  oneof event {
+    Registered registered = 1;
+    Evicted evicted = 2;
+  }
+}
+
+// Registered acknowledges that the service is now routable. voya sends it
+// once, immediately, before any other event on the stream.
+message Registered {
+  // The authority callers dial — "payments.internal". Echoed back rather
+  // than left implicit so that the developer reads the exact string that
+  // will route, and a name normalized differently than they expected
+  // shows up at startup instead of as a 404 later.
+  string authority = 1;
+
+  // The proxy port that authority is served on, so the acknowledgement
+  // carries a complete dial string.
+  uint32 proxy_port = 2;
+}
+
+// Evicted says the registration was taken over by another instance of the
+// same service. voya sends it and then closes the stream (ADR 002:
+// evict-and-replace, loudly).
+//
+// This exists to keep two ADRs from fighting. ADR 004 has a service whose
+// stream drops reconnect with backoff and re-register — correct when voya
+// restarted. Applied to an eviction, it makes two live instances depose
+// each other in a loop. A client that reads this event knows the name is
+// legitimately someone else's and must not race for it.
+message Evicted {
+  // Human-readable, in the register ADR 005 asks for: what happened, and
+  // what the developer can do about it.
+  string reason = 1;
+
+  // The instance that took the name over. Zero when unknown — the
+  // incoming registration is not obliged to supply a PID.
+  uint32 replaced_by_port = 2;
+  int32 replaced_by_pid = 3;
+}

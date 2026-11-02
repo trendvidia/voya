@@ -1,0 +1,131 @@
+@type voya.config.v1.Config
+
+@header chameleon.v1.LayerHeader
+{
+  # Checked against the chain entry that loaded this file. Cheap insurance
+  # that base.pxf and voya.pxf cannot be swapped.
+  id = "base"
+}
+
+# voya's defaults, embedded in the binary. Every field of voya.config.v1.Config
+# is set here, and this is the only place their values are written down —
+# (pxf.default) annotations on the schema would be a second copy, and one of
+# them would eventually be wrong.
+#
+# To override any of these, copy the lines you want into voya.pxf in your
+# config directory (`~/.config/voya/voya.pxf` by default; $VOYA_CONFIG_DIR
+# wins if set). That file is optional and starts out absent — voya runs with
+# no configuration at all, which is what this layer is for.
+
+# The three ports voya owns on loopback (ADR 001). All three must differ;
+# `voya run` reports which two collided, and which layer set them, before it
+# binds anything.
+#
+# 9777 is fleet convention: every service declares it in its fly.toml, so
+# http://payments.internal:9777 is the same dial string here and on Fly.
+# Changing it locally means changing it there too, or the parity this whole
+# tool exists for is gone.
+proxy_port        = 9777
+
+# DNS, for consumers that are not our Go services — curl, grpcurl, Postman,
+# browsers (ADR 002). The /etc/resolver/internal entry that `voya dns
+# install` writes names this port, so changing it means re-running that.
+dns_port          = 9778
+
+# The registration stream (ADR 004).
+registration_port = 9779
+
+log_level         = LOG_LEVEL_INFO
+
+# ADR 005's request log: every request the proxy answers is recorded in a
+# bounded in-memory ring buffer — metadata only, never a payload byte — that
+# `voya log` reads. Turning it off records nothing. The live line `voya run`
+# prints per request is log_level's, not this switch's: LOG_LEVEL_WARN quietens
+# the terminal and leaves the buffer filling.
+request_log       = true
+
+# How long voya waits for the requests it is already proxying to finish after
+# SIGINT/SIGTERM: too short cuts live requests off, too long slows the restart
+# loop.
+#
+# Not the number issue #7 measured, and deliberately still a guess. #7 measured
+# how long a *service* must stay routable after deregistering, which is a race
+# with a quantity underneath it (voya.DefaultShutdownGrace, 50ms). This one
+# bounds how long the daemon lets other people's in-flight requests finish,
+# which depends on their handlers and not on anything voya can measure — ADR
+# 004's Consequences keeps the three numbers apart and says why.
+shutdown_grace    = 250ms
+
+# The local stand-in for the edge's rate limiter (ADR 006): per authority,
+# fixed windows, and voya's own voya.internal is never counted. Off by
+# default so an unconfigured voya answers every request the way it always
+# has; `enabled = true` in a user layer is the whole switch, and the tiny
+# thresholds below are ADR 006's own suggestion — the bug this exists to
+# catch is in whether the caller honours 429 and Retry-After, not in how
+# much traffic the limiter can take.
+rate_limit {
+  enabled  = false
+  requests = 5
+  window   = 1m
+}
+
+# Browser origins allowed to read responses through the proxy, beyond the local
+# ones that always are: localhost, 127.0.0.1, [::1], *.localhost and *.internal
+# (ADR 003, amendment of 2026-11-01). Each entry is an exact scheme://host[:port]
+# as a browser sends it, such as "https://app.example.test:8443": no default
+# port, and a non-ASCII host as punycode. Without this limit any website open in
+# a browser could read every service through voya.
+cors_origins = []
+
+# voya's local identity provider (ADR 006). voya signs real JWTs that services
+# validate the same way they validate the production IdP's; the issuer and the
+# JWKS URL are the only difference between the two environments. The signing
+# key is not here and never will be: it is generated on first use as
+# signing-key.pem beside this file's user-layer twin, mode 0600 (ADR 006,
+# amendment of 2026-08-19).
+auth {
+  # The `iss` claim, and the one issuer a service's allowlist names to trust
+  # voya. voya.internal:9777 is the reserved name the proxy keeps for voya's
+  # own endpoints (ADR 005), where the JWKS will be served from.
+  issuer         = "http://voya.internal:9777"
+
+  # The `aud` claim when a persona does not name its own. A placeholder
+  # convention for what a service's local config expects; the wrong-audience
+  # persona below exists to exercise the mismatch.
+  audience       = "internal"
+
+  # A token lives an hour: long enough to paste into a terminal and keep
+  # using, short enough that a stale one expires within a working session.
+  token_lifetime = 1h
+
+  # The fixtures `voya token --as <name>` mints — cases, not roles (ADR 006,
+  # "Personas are fixtures, not a model"): `has-write-scope`, not `admin`. A
+  # voya.pxf that sets `personas` replaces this whole list (chameleon merges
+  # repeated fields by replacement), so restate the ones you want to keep.
+  # `personas = []` removes them all.
+  personas = [
+    {
+      name    = "has-write-scope"
+      subject = "has-write-scope"
+      scopes  = ["read", "write"]
+    }
+    {
+      name    = "has-read-scope"
+      subject = "has-read-scope"
+      scopes  = ["read"]
+    }
+    {
+      name    = "no-scopes"
+      subject = "no-scopes"
+      scopes  = []
+    }
+    {
+      # Inherits nothing but the issuer: a token a correctly configured
+      # service rejects on `aud`, with no flag to remember.
+      name     = "wrong-audience"
+      subject  = "wrong-audience"
+      scopes   = ["read", "write"]
+      audience = "not-this-service"
+    }
+  ]
+}

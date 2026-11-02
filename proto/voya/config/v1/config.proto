@@ -1,0 +1,198 @@
+syntax = "proto3";
+
+package voya.config.v1;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/trendvidia/voya/proto/voya/config/v1;configv1";
+
+// Config is voya's own configuration: the three listeners it owns, how much
+// it says while it runs, and how long it waits for in-flight requests when
+// asked to stop.
+//
+// The schema is the source of truth for the *shape*; the committed base
+// layer (internal/config/layers/base.pxf, embedded in the binary) is the
+// source of truth for the *values*. A developer with no config file at all
+// gets that base layer, which is why voya runs with zero setup.
+//
+// Deliberately absent:
+//
+//   - A listen address. All three listeners bind 127.0.0.1 explicitly and
+//     never 0.0.0.0 (ADR 002). Registration is unauthenticated and
+//     trust-on-first-use; loopback is what bounds it, so it is not a knob.
+message Config {
+  // Port for the reverse proxy, which routes on the :authority / Host
+  // header to each service's registered ephemeral port.
+  //
+  // 9777 is fleet convention rather than taste: every service declares it
+  // in its fly.toml, so http://payments.internal:9777 is byte-identical as
+  // a dial string on a laptop and on Fly (ADR 001). Changing it here means
+  // changing it there too.
+  uint32 proxy_port = 1;
+
+  // Port for the DNS server, which answers every *.internal query with
+  // 127.0.0.1. Opt-in support for consumers that are not our Go services —
+  // curl, grpcurl, Postman, browsers (ADR 002). Wired up by a one-time
+  // /etc/resolver/internal entry that names this port, so changing it means
+  // redoing that entry: `sudo voya dns install` writes it from this field
+  // and rewrites its own file when the port has moved.
+  uint32 dns_port = 2;
+
+  // Port for the registration stream (ADR 004). Services connect here on
+  // startup and hold the stream open for their lifetime.
+  uint32 registration_port = 3;
+
+  // How much voya says while it runs.
+  LogLevel log_level = 4;
+
+  // How long voya waits for in-flight requests after SIGINT/SIGTERM before
+  // exiting.
+  //
+  // ADR 004 records this as a guess — too short drops in-flight requests,
+  // too long slows the restart loop — and asks for it to be configurable
+  // for exactly that reason. Issue #7 covers measuring a real value.
+  google.protobuf.Duration shutdown_grace = 5;
+
+  // Whether the proxy keeps ADR 005's request log: one record per request
+  // it answers — timestamp, authority, method, path, status, duration,
+  // upstream port; never a payload byte — in a bounded in-memory ring
+  // buffer that `voya log` and DiagService.ListRequests read. On by default
+  // in base.pxf; off, nothing is recorded and nothing is printed.
+  //
+  // This is the buffer's toggle only. The live line `voya run` prints per
+  // request is a LOG_LEVEL_INFO message, so log_level is what silences the
+  // terminal — and doing so leaves the buffer filling, because a developer
+  // who quietened the terminal still wants "what happened to *this*
+  // request" answered.
+  bool request_log = 6;
+
+  // voya's local identity provider (ADR 006): the issuer it signs as, the
+  // audience it stamps, how long a token lives, and the personas
+  // `voya token --as <name>` mints. Always set — base.pxf carries a
+  // case-named persona set so the failure paths are reachable with no
+  // configuration at all.
+  Auth auth = 7;
+
+  // The local rate limiter (ADR 006). Always set — base.pxf ships it
+  // disabled with usable thresholds, so turning it on is one line in a
+  // user layer.
+  RateLimit rate_limit = 8;
+
+  // Origins allowed to read responses through the proxy, beyond the local ones
+  // that always are: localhost, 127.0.0.1, [::1], *.localhost and *.internal.
+  // Each is an exact scheme://host[:port], with no wildcards.
+  repeated string cors_origins = 9;
+}
+
+// RateLimit is the local stand-in for the edge's limiter (ADR 006). The
+// thresholds are deliberately tiny: production-scale behaviour is not
+// reproducible on a laptop, and the bug this exists to catch is in the
+// caller, not in the limiter.
+//
+// The budget is per authority — the routed service name, so
+// payments.internal and payments.internal:9777 spend from one budget — and
+// counts only requests the proxy forwards: a refused route never reached an
+// upstream, and voya's own voya.internal is never throttled at all (ADR
+// 006, amendment of 2026-08-19).
+message RateLimit {
+  // Whether the limiter runs at all. Off — the shipped default — leaves
+  // every request untouched; on is what exercises the path ADR 006 cares
+  // about: the caller's handling of 429 and Retry-After.
+  bool enabled = 1;
+
+  // Requests allowed per window, per authority. ADR 006 says "say five
+  // requests per minute", which is a suggestion rather than a measurement.
+  uint32 requests = 2;
+
+  // The window the count resets over. Fixed windows: the count starts at
+  // the first request an authority makes and resets this long after it.
+  google.protobuf.Duration window = 3;
+}
+
+// Auth is voya's local identity provider (ADR 006). voya signs tokens that
+// services validate exactly the way they will validate the real IdP's in
+// production — the only difference between the two environments is this
+// issuer and its JWKS URL, one chameleon-resolved value on the service's
+// side.
+//
+// The signing key is not configuration. It is generated on first use under
+// the configuration directory (ADR 006, amendment of 2026-08-19) and never
+// written in a layer: a key in a .pxf file is a key in a file that is meant
+// to be copied around.
+message Auth {
+  // The `iss` claim voya stamps, and the identity a service's issuer
+  // allowlist names to trust voya. Single-valued by ADR 006's sharp edge: a
+  // service that accepted both this and the production issuer would accept
+  // voya-signed tokens in production, so there is exactly one.
+  string issuer = 1;
+
+  // The `aud` claim voya stamps when a persona does not name its own.
+  string audience = 2;
+
+  // How long a minted token is valid for: `exp` is `iat` plus this.
+  google.protobuf.Duration token_lifetime = 3;
+
+  // The fixtures `voya token --as <name>` mints. ADR 006: personas are test
+  // fixtures describing CASES, not a mirror of the live authorization model
+  // — name them for the case (`has-write-scope`, `no-scopes`), never for a
+  // role (`admin`, `viewer`), because a role-shaped name invites reading a
+  // fixture as a description of production.
+  //
+  // A layer that sets this field replaces the whole list (chameleon merges
+  // repeated fields by replacement, not by appending), so a voya.pxf that
+  // adds one persona restates the ones it wants to keep.
+  repeated Persona personas = 4;
+}
+
+// Persona is one token fixture: what `voya token --as <name>` puts in the
+// token it signs.
+message Persona {
+  // The name `--as` takes. Case-shaped, per Auth.personas; unique within
+  // the list, and never empty.
+  string name = 1;
+
+  // The `sub` claim.
+  string subject = 2;
+
+  // The `scope` claim, space-joined on the wire in the usual way — so no
+  // scope may be empty or contain whitespace.
+  repeated string scopes = 3;
+
+  // Overrides Auth.audience for this persona, so a wrong-audience fixture
+  // is a persona rather than a flag. Empty means inherit.
+  string audience = 4;
+
+  // Extra claims merged into the token, for tenant ids and the like. The
+  // claims voya stamps itself — iss, sub, aud, exp, iat, nbf, jti, scope —
+  // cannot be set here: a persona that restated one would silently be
+  // describing a token voya does not mint.
+  map<string, string> claims = 5;
+}
+
+// LogLevel is the verbosity floor: a message at or above the configured
+// level is printed.
+//
+// The names are what a developer writes in a .pxf layer
+// (`log_level = LOG_LEVEL_DEBUG`), so they are part of the config surface,
+// not just an internal enum.
+enum LogLevel {
+  // Unset. Rejected by validation rather than defaulted, so that a layer
+  // that clears the field fails loudly instead of silently going quiet.
+  LOG_LEVEL_UNSPECIFIED = 0;
+
+  // Only failures that stop voya doing its job.
+  LOG_LEVEL_ERROR = 1;
+
+  // Failures plus the events ADR 002 requires be impossible to miss —
+  // notably a duplicate registration evicting a live instance.
+  LOG_LEVEL_WARN = 2;
+
+  // The default: the above, plus lifecycle and the live line of the
+  // request log ADR 005 turns on by default — one per request the proxy
+  // answers. Silencing it here does not stop the ring buffer request_log
+  // toggles; `voya log` still reads that.
+  LOG_LEVEL_INFO = 3;
+
+  // Everything, including per-request routing decisions.
+  LOG_LEVEL_DEBUG = 4;
+}

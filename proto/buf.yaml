@@ -1,0 +1,43 @@
+# buf module for voya's own schemas. The module root is this directory, so a
+# file's path inside it matches its proto package: voya/config/v1/config.proto
+# is voya.config.v1.
+#
+# Generated Go lands beside each .proto (see buf.gen.yaml) and is committed —
+# `go install github.com/trendvidia/voya/cmd/voya` must work without buf,
+# protoc, or any plugin on the machine.
+#
+# Nothing is vendored here on purpose. chameleon carries a copy of
+# pxf/annotations.proto so its own schemas can use (pxf.required) and
+# (pxf.default); voya must not. Both copies would generate a Go package
+# registering the `pxf.required` extension and the file path
+# "pxf/annotations.proto", and voya links chameleon — two registrations of the
+# same name panic protoregistry at init. voya's defaults live in the committed
+# base layer instead, and its validation is Go in internal/config, which is
+# where the errors ADR 001 asks for (naming the port and the layer) can
+# actually be written.
+version: v2
+
+modules:
+  - path: .
+
+lint:
+  use:
+    - STANDARD
+
+# Enforced by `make proto-breaking` against origin/main, in `make ci` and in
+# the proto CI job (#30). proto-check cannot stand in for it: that only asserts
+# the committed bindings match the .proto, and they will, because the generator
+# reproduces a break faithfully.
+#
+# FILE rather than WIRE or WIRE_JSON, decided 2026-08-09. WIRE would allow a
+# rename — the wire format does not carry names — but voya's generated bindings
+# are committed and imported by other repos (ADR 004: every service links the
+# registration client), so a renamed message breaks compilation across the
+# fleet while staying wire-compatible. The rule set should match how the
+# artifact is consumed, and it is consumed as Go.
+#
+# WIRE_JSON is moot here for a second reason: nothing renders these messages as
+# JSON. ADR 001 puts human-readable output in pxf.
+breaking:
+  use:
+    - FILE

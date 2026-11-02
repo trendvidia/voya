@@ -1,0 +1,48 @@
+@type chameleon.v1.ChainSpec
+
+# voya's chain spec (ADR 001). Read top-to-bottom is also the merge order:
+# each layer overrides the ones above it.
+#
+# This file is embedded in the binary, not read from disk. Only the `user`
+# layer comes from the developer's machine.
+
+version = "1.0.0"
+
+# voya is a laptop tool: there is one environment and it is the laptop. The
+# field is not optional in a ChainSpec, and a single node keeps the
+# ancestry walk trivial rather than pretending at a hierarchy we do not
+# have. If a second environment ever appears, it extends this one.
+default_environment = "local"
+
+environments = [
+  { name = "local" }
+]
+
+# `sources` is deliberately absent. The resolver binds source names in Go
+# (internal/config/config.go, resolver.WithSource) and never reads this
+# field, so declaring `default` as a filesystem root here would be
+# documentation that no code checks and that is wrong on every machine
+# where the config directory differs.
+layers = [
+  # The committed defaults, embedded in the binary. `required` because
+  # nothing else supplies a value: if this layer ever failed to resolve,
+  # every field would silently fall to its proto zero — ports 0, log level
+  # unspecified, no shutdown grace — and voya would bind three random
+  # ephemeral ports instead of failing.
+  {
+    id = "base"
+    path = "base.pxf"
+    for_each = ONCE
+    required = true
+  }
+
+  # The developer's overrides, read from the config directory. Optional by
+  # construction: a missing file is the common case, and a dev tool has to
+  # run with zero setup.
+  {
+    id = "user"
+    path = "voya.pxf"
+    for_each = ONCE
+    source = "user"
+  }
+]

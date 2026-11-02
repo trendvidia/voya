@@ -1,0 +1,121 @@
+# Mirrors the house config used by chameleon and protowire-go. Pinned to the
+# same golangci-lint version as the Makefile and CI so the three cannot drift.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - gocritic
+    - gosec
+    - intrange
+    - misspell
+    - nilerr
+    - nilnesserr
+    - noctx
+    - nolintlint
+    - prealloc
+    - revive
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+      exclude-functions:
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - fmt.Fprint
+        - (io.Closer).Close
+
+    gosec:
+      excludes:
+        - G101 # potential hardcoded credentials — false positives in fixtures
+
+    revive:
+      rules:
+        - name: var-naming
+          disabled: true # proto-generated identifiers follow proto's naming, not Go's
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    generated: lax
+    # Generated code: skip every linter. `paths` is the mechanism that does
+    # that. An `exclusions.rules` entry with `linters: [all]` looks equivalent
+    # and is not: "all" is matched as a linter *name*, matches nothing, and the
+    # rule silently never fires — `golangci-lint config verify` accepts it.
+    # Verified: a misformatted .pb.go with an unused symbol reported 3 issues
+    # under `linters: [all]` and 0 under `paths`.
+    paths:
+      - '\.pb\.go$'
+      # protoc-gen-connect-go output. Named separately from .pb.go because it
+      # is a different generator: same rule, and neither pattern covers the
+      # other.
+      - '\.connect\.go$'
+      - '\.chameleon\.go$'
+    rules:
+      # Tests: relax security + complexity rules; harness setup routinely
+      # ignores errors that production code would have to handle.
+      - path: '_test\.go$'
+        linters: [gosec, errcheck, noctx, prealloc]
+
+      # G304 flags opening a file whose path came from outside the program.
+      # internal/resolverfile is where `voya dns install` and `dns uninstall`
+      # read and write /etc/resolver/internal (#156): the path is a
+      # parameter so the tests can point it into a temp directory, and the
+      # one caller outside the tests passes the package's own constant —
+      # operator input on a dev machine at most, never untrusted input.
+      # cmd/voya/ itself opens nothing: the .pxf loading it asks for by
+      # passing config.Dir() happens inside chameleon, a dependency this
+      # lint never sees.
+      - path: 'internal/resolverfile/'
+        linters: [gosec]
+        text: 'G304' # file path provided as taint input
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # The third truncation knob, and the least obvious. gofmt emits exactly one
+  # issue per file, anchored at the first offending line, so with the default
+  # `true` any other finding on that same line hides the file's entire
+  # formatting status. Verified: a file that is both misformatted and holds an
+  # unused symbol reports `unused: 1` by default and `gofmt: 1, unused: 1`
+  # here — the formatting check this repo just added was being swallowed.
+  uniq-by-line: false
+
+# golangci-lint v2 moved formatters out of `linters`, and `run` does not
+# execute them unless they are enabled here. Without this block nothing in CI
+# checks formatting: `make fmt-check` exists but no CI job calls it, and
+# `golangci-lint run` reports a misformatted file as 0 issues. gofmt's
+# simplify matches the `gofmt -w -s` that `make fmt` applies.
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true
+  # `linters.exclusions` does not govern formatters — they carry their own.
+  # Without this, gofmt is the one check that still fires on generated files,
+  # and `simplify: true` makes that near-certain: `gofmt -s` rewrites the
+  # unsimplified composite literals protoc and chameleon routinely emit. CI
+  # would then fail on files nobody is allowed to edit.
+  exclusions:
+    generated: lax
+    paths:
+      - '\.pb\.go$'
+      - '\.connect\.go$'
+      - '\.chameleon\.go$'

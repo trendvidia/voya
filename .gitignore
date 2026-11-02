@@ -1,0 +1,49 @@
+# Compiled binaries. `go build ./cmd/voya` from the repo root lands here.
+/voya
+/cmd/voya/voya
+/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test + coverage artifacts. Deliberately not `*.out`: `coverage.*` already
+# covers the profile `make cover` writes, and `testdata/*.out` is the standard
+# Go convention for golden fixtures — a blanket rule would let one be
+# `git add`-ed with no error, committed as absent, and pass locally against an
+# untracked file while failing on a fresh clone.
+*.test
+coverage.*
+
+# Build / dist
+/dist/
+/build/
+
+# Local-only Go workspaces pointing at sibling checkouts (chameleon,
+# protowire-go). The committed go.work covers only modules inside this repo;
+# see the comment at the top of it.
+go.local.work
+go.local.work.sum
+
+# vendor/ optional — only present if a consumer runs `go mod vendor`.
+/vendor/
+
+# IDE / editor state
+/.idea/
+/.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.history/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local environment files (never commit secrets, even in tests).
+.env
+.env.local
+
+# Agent / assistant session state (auto-memory).
+/memory/

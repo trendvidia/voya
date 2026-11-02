@@ -1,0 +1,27 @@
+# Generation config for voya's schemas. Run `make generate` from the repo
+# root rather than `buf generate` by hand: the Makefile puts the pinned
+# plugin binaries on PATH first, and unpinned plugins produce a diff that
+# `make proto-check` then reports as stale generated code.
+#
+# Produces:
+#   voya/config/v1/config.pb.go
+#   voya/registry/v1/registry.pb.go
+#   voya/registry/v1/registryv1connect/registry.connect.go
+#   voya/diag/v1/diag.pb.go
+#   voya/diag/v1/diagv1connect/diag.connect.go
+version: v2
+
+plugins:
+  # paths=source_relative keeps the output beside the .proto rather than
+  # under a rebuilt github.com/trendvidia/voya/... tree.
+  - local: protoc-gen-go
+    out: .
+    opt:
+      - paths=source_relative
+
+  # connect-go, not grpc-go: the fleet is connect-go (ADR 001), and ADR 004's
+  # registration stream is a Connect bidi stream.
+  - local: protoc-gen-connect-go
+    out: .
+    opt:
+      - paths=source_relative

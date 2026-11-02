@@ -1,0 +1,74 @@
+go 1.26.10
+
+// Six modules live in this repo. authn is separate for the opposite of a
+// historical reason: it is what production services import to validate
+// tokens (ADR 006, #211), and a module of its own is what keeps chameleon,
+// connect-go, the proxy and the registry out of their binaries — its go.mod
+// requires a JOSE library and nothing else, and authn/deps_test.go enforces
+// that the arrow never turns around. client is separate for the same reason
+// one step earlier (#36): it is what every fleet service imports to join
+// local development, and its module boundary is what keeps the root module —
+// and chameleon behind it — off their build graphs;
+// client/deps_test.go holds that arrow. proto is separate because it is the
+// leaf those two both stand on: the daemon serves the generated schemas and
+// client speaks them, so the bindings can be required by each without either
+// requiring the other. test/trailer is separate because it predates
+// the root module, and stays separate to keep grpc-go — the whole point of
+// that harness — out of what voya builds and links: no package voya builds
+// imports it, and nothing it ships links it.
+//
+// Through chameleon v0.22.1 the claim had to be narrower, because the root
+// module got grpc-go anyway: internal/config -> chameleon/resolver ->
+// chameleon/sops -> sops/v4/keyservice, 159 packages linked into cmd/voya.
+// The split bought only what the module *declared*. chameleon v0.23.0 ended
+// that (#28) — `go mod why -m google.golang.org/grpc` now answers "main
+// module does not need module google.golang.org/grpc" — so the split is once
+// again about the dependency itself and not merely about its label.
+//
+// #225 narrowed it a third time, and #236 restored it rather than rewording
+// it: test/acceptance's REST fixture requires connectrpc.com/vanguard, and
+// while that fixture was a package of the root module, vanguard's own tests
+// dragged grpc-go back into this module's build list — `GOWORK=off go list
+// -m google.golang.org/grpc` answered v1.79.3 where before it answered
+// nothing. Decided 2026-08-20: test/acceptance is a module of its own, for
+// the reason test/trailer is, and the root module's manifest is vanguard-free
+// again — that same command answers "not a known dependency", and `go mod
+// why -m` answers "main module does not need module google.golang.org/grpc"
+// as the paragraph above says. The alternative, narrowing the claim to
+// "nothing voya *builds* links a transcoder", was rejected because amending
+// a record to match what happened is how a repository stops being able to
+// trust its own documents; cmd/voya/deps_test.go keeps the binary-level pin
+// regardless. test/acceptance imports the root module — the opposite arrow
+// from client and authn, and correct for a suite that starts the daemon — and
+// carries intra-repo replaces for the root and all three siblings, so that
+// GOWORK=off it exercises the checkout and not the published tags; its go.mod
+// makes both arguments.
+//
+// test/trailer now proxies through voya itself (issue #21), which the
+// workspace is what makes work here. Its go.mod also carries an intra-repo
+// `replace` for the GOWORK=off case; the reasoning is written out there.
+//
+// `go test ./...` does NOT span modules — the Makefile and CI run each one
+// explicitly. See `make test`.
+//
+// For cross-repo work against local chameleon / protowire-go checkouts, do not
+// `go work use` them here: that edit is easy to commit by accident and breaks
+// every build that does not have the sibling on disk. Copy this file to the
+// git-ignored go.local.work, add the sibling there, and select it per-shell:
+//
+//	cp go.work go.local.work
+//	GOWORK=$PWD/go.local.work go work use ../chameleon
+//	GOWORK=$PWD/go.local.work go test ./...
+//
+// ADR 001 rejects `replace` directives in go.mod for those siblings, for the
+// same reason. The intra-repo one mentioned above is a different case, and
+// test/trailer/go.mod is where that argument is made.
+use (
+	.
+	./authn
+	./client
+	./examples
+	./proto
+	./test/acceptance
+	./test/trailer
+)
