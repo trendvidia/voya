@@ -11,7 +11,7 @@ require (
 	github.com/trendvidia/protowire-go v1.13.0
 	github.com/trendvidia/voya/authn v0.1.1
 	github.com/trendvidia/voya/client v0.2.1
-	github.com/trendvidia/voya/proto v0.2.1
+	github.com/trendvidia/voya/proto v0.3.0
 	google.golang.org/protobuf v1.36.12
 )
 

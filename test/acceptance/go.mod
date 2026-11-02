@@ -25,7 +25,7 @@ require (
 	github.com/trendvidia/voya v0.0.0
 	github.com/trendvidia/voya/authn v0.1.1
 	github.com/trendvidia/voya/client v0.2.1
-	github.com/trendvidia/voya/proto v0.2.1
+	github.com/trendvidia/voya/proto v0.3.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688
 	google.golang.org/protobuf v1.36.12
 )

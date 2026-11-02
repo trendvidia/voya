@@ -11,7 +11,7 @@ go 1.26.10
 require (
 	connectrpc.com/connect v1.20.0
 	connectrpc.com/grpcreflect v1.3.0
-	github.com/trendvidia/voya/proto v0.2.1
+	github.com/trendvidia/voya/proto v0.3.0
 	google.golang.org/protobuf v1.36.12
 )
 

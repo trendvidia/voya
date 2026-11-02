@@ -61,8 +61,8 @@ github.com/trendvidia/voya/authn v0.1.1 h1:bzr4yuwKTX/S5+R4RmbA95Z/j1ykBGjnjUDK0
 github.com/trendvidia/voya/authn v0.1.1/go.mod h1:Kdh5wtXFG4Zq6mj9XjCNADwoZ5bfLsViUlBW8LLyK8Q=
 github.com/trendvidia/voya/client v0.2.1 h1:Hjku4llVWfrlTn+aGd2Virt+hUjGfHAvyTK+B7+aS2E=
 github.com/trendvidia/voya/client v0.2.1/go.mod h1:pjLsRUWie8nCuJwRqr+o/qRPPB/s+X49ZLdhUJZlUZI=
-github.com/trendvidia/voya/proto v0.2.1 h1:4UFOAWylKQkZW08m1VwGUYCs09H+nQ7aF2JPbrcQDTY=
-github.com/trendvidia/voya/proto v0.2.1/go.mod h1:HhZm2tvo1orDsxzXqRPnrpEY6/t6NpaSMTMMhYh3TqE=
+github.com/trendvidia/voya/proto v0.3.0 h1:Qq5z8RpmAkad6DaWEmfiv3re41UtddaKQZhYgto7qdQ=
+github.com/trendvidia/voya/proto v0.3.0/go.mod h1:farb4V5FpuZE5tGika960zXA6Cc8Zmrbg1czQLz20y0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/otel v1.45.0 h1:pdrWmLHofpubmArBv1LgFSv1Z0Ie/ppdZzu+kUN5EeU=
