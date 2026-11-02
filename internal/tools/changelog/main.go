@@ -41,12 +41,12 @@
 // and "two things the install cannot check for you" among them, each made
 // false by a later fragment in the same unreleased cycle.
 //
-// The worked example on disk now is the v0.3.0 cycle's first fragment,
-// changelog.d/added/examples-and-a-quick-start.md, and it is an added/ entry
-// with no baseline to correct — which is what the pass leaves alone. Nothing
-// folds into it and it folds into nothing: it introduces behaviour, so it
-// renders as it stands. That is the common case and it is worth having named
-// here beside the rules above, which are all about the uncommon one.
+// v0.3.0 ran the same pass over 14 fragments and folded one: a fixed/ entry
+// about the example services, which that release introduced, went into the
+// added/ entry for them. The other 13 stood, being new behaviour or corrections
+// to what v0.2.0 shipped, which is the common case. Those fragments went with
+// the release, so this comment names none until the next cycle's first fragment
+// brings a worked example back (#144).
 //
 // This is also the mechanism working as #144 designed it. v0.2.0's release
 // commit emptied changelog.d/ and rewrote this paragraph to name no fragment
@@ -54,7 +54,7 @@
 // floor is off in that window and the release lands green. The first fragment
 // of the next cycle re-arms it, and the PR adding that fragment fails
 // TestPackageCommentNamesFragmentsThatExist until it restores an example —
-// which is how this paragraph came back (#136, #144).
+// which is how the examples came back after v0.2.0 (#136, #144).
 package main
 
 import (

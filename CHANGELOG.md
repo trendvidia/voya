@@ -8,6 +8,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Entries are assembled from one-file-per-change fragments under
 [changelog.d/](changelog.d/); see that directory's README for how to add one.
 
+## [v0.3.0] - 2026-11-02
+
+### Added
+
+- **Two runnable example services, and a README quick start built on them**
+  ([#293](https://github.com/trendvidia/voya/issues/293)). Until now nothing
+  shipped that a person could start to see voya work: the only `main` packages
+  were `voya` itself and two internal tools, and the first thing a new user did
+  was write a service from README fragments that nothing compiled.
+  `examples/payments` registers with `voya.Join` and serves a Connect
+  procedure with reflection mounted, so `voya call payments
+  voya.example.v1.Payments/Charge 'value = "invoice-1"'` works against it;
+  `examples/billing` registers too and calls payments at
+  `http://payments.internal:9777`, the dial string it would use unchanged on
+  Fly. Three terminals — `voya run`, `go run ./payments`, `go run ./billing` —
+  and a second `go run ./payments -instance second` is ADR 002's
+  evict-and-replace happening in front of you, with traffic following the new
+  instance and the deposed one taking its name back when you stop it. No sudo
+  and no `voya dns install`: the dialer `Join` installs is what resolves
+  `*.internal` for Go callers.
+  Both serve `grpc.health.v1`, so `voya health` shows `serving` for them.
+
+  They are a module of their own, on `test/acceptance`'s argument — nobody
+  installs them, so their requirements stay off the manifest of the module
+  people do — and being one keeps them compiled for every cross target by
+  `make ci`, so an example that stops building fails the gate rather than
+  greeting the next reader. One thing in them is not what a real service
+  writes, and it says so where it happens: `examples/internal/demo` builds a
+  protobuf schema by hand from descriptors, because a `.proto` of its own
+  would need a second buf module while `proto-lint`, `proto-breaking` and
+  `proto-check` are all scoped to `proto/`.
+
+- **voya can route to plain HTTP/1.1 servers**
+  ([#315](https://github.com/trendvidia/voya/issues/315)). The proxy now finds
+  out what a port speaks before its first request, so a service that doesn't
+  offer cleartext HTTP/2 works behind its name instead of getting a 502. gRPC
+  still needs HTTP/2, and a gRPC call to an HTTP/1.1 service is refused with a
+  message saying so.
+
+- **voya can route to a service that serves only TLS**
+  ([#315](https://github.com/trendvidia/voya/issues/315)). The caller stays on
+  `http://<name>.internal:9777`, and voya connects to the service over TLS,
+  accepting its local certificate. gRPC works if the service offers HTTP/2.
+
+### Changed
+
+- **voya is MIT licensed.** Go is raised to 1.26.10, chameleon to v0.27.1 and
+  `golang.org/x/crypto` to v0.58.0, which clears the known vulnerabilities in
+  code voya reaches. `proxy_port = null` is now refused by the parser rather
+  than by voya's validation, and still names the field.
+
+- **`client/reflection` serves nothing on Fly** ([#332](https://github.com/trendvidia/voya/issues/332)).
+  `Mount` and `MountFrom` mounted their handlers unconditionally, so a service
+  following README published its full schema in production. When `FLY_APP_NAME`
+  is set they now mount nothing and return nil. A service that wants reflection
+  on Fly mounts grpcreflect's handlers itself. README also now states the rule
+  for a production host that is not Fly: set `FLY_APP_NAME`, or do not call
+  `Join`.
+
+### Removed
+
+- **`voya doctor` is gone; its DNS check is `voya dns check`** ([#314](https://github.com/trendvidia/voya/issues/314)).
+  The check keeps its exit codes: 0 ok, 1 problem, 2 unknown. The `proxy-port`,
+  `duplicates`, `jwks` and `signing-key` checks and `-pxf` are removed, because
+  `voya run` and `voya status` already say the same things, and
+  `DoctorReport`, `Check` and `Verdict` leave `voya.diag.v1`. With another
+  program on the proxy port, `voya status`, `routes`, `log` and `health` now
+  name it rather than printing a transport error.
+
+### Fixed
+
+- **A missing resolver file is no longer a problem** ([#296](https://github.com/trendvidia/voya/issues/296)).
+  The file is opt-in, so `voya dns check` gives verdict `ok` and exit 0 without
+  it, with the state still reading `resolver-not-installed` and the install
+  command still named. A probe that could not run gives `unknown`, and anything
+  answering `*.internal` without the file, or an installed file that does not
+  work, is still `problem`.
+
+### Security
+
+- **A slow issuer can no longer stall every `authn` validation.** The validator
+  held its lock across the JWKS fetch, so any token naming an unknown kid could
+  stop every validation in the process for as long as the issuer took to answer.
+  Now only callers that need the answer wait: a token with an unknown kid, and
+  the one validation that notices the key set has gone stale. They share one
+  fetch and give up when their own context ends. The fetch no longer ends with
+  the caller that started it, so a client hanging up cannot discard its answer. A
+  withdrawn key can outlive the refetch interval by the length of one fetch.
+
+- **`authn` bounds a JWKS fetch to 10 seconds by default.** A hung issuer could
+  otherwise block validation without limit. A client passed to `WithHTTPClient`
+  overrides it by setting its own `Timeout`, and one with no `Timeout` gets the
+  10 seconds.
+
+- **`authn.New` refuses a Production JWKS URL that is not https.** Keys fetched
+  over plain http could be replaced by anyone on the network path. A service
+  using such a URL now fails at startup. Development is unchanged.
+
+- **CORS is limited to local origins.** voya reflected every origin with
+  credentials, so any website could read services through it once
+  `voya dns install` was in place. Now only `localhost`, `127.0.0.1`, `[::1]`,
+  `*.localhost` and `*.internal` are allowed, plus exact origins in the new
+  `cors_origins` config field. A frontend on any other origin must be added.
+  voya refuses to start on an entry a browser would never send, such as one
+  with a path or its scheme's default port, and says which part is wrong.
+
+- **A local process can no longer take a service's name without a trace.** voya
+  treated any registration quoting the holder's pid as that service reconnecting,
+  and the pid is whatever the client says it is. A process could take the name,
+  and the traffic and bearer tokens sent to it, with no warning and nothing in
+  `voya status`. A claim on another port now evicts the holder like any other:
+  a warning on voya's stderr, an entry in `voya status`, and an `Evicted` event on
+  the holder's stream. A registration matching both the holder's pid and port
+  joins the existing one, so hanging up afterwards no longer frees the name.
+
+- **The request log escapes control characters.** A request path, method or
+  authority could carry escape sequences or a newline to the developer's
+  terminal through `voya run` and `voya log`, and any web page could send one.
+
 ## [v0.2.0] - 2026-08-21
 
 ### Added

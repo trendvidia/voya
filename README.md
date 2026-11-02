@@ -35,7 +35,7 @@ before writing any of your own. Three terminals, no sudo, no DNS setup, no
 Docker.
 
 ```console
-$ go install github.com/trendvidia/voya/cmd/voya@v0.2.0   # terminal 1
+$ go install github.com/trendvidia/voya/cmd/voya@v0.3.0   # terminal 1
 $ voya run
 voya: proxy on http://127.0.0.1:9777, registration on 127.0.0.1:9779, dns on 127.0.0.1:9778
 ```
@@ -345,12 +345,12 @@ are tagged as of
 [#231](https://github.com/trendvidia/voya/issues/231) — the root requires both
 by version now, so `authn`'s untagged `v0.0.0` had nothing left to resolve to
 the moment the replaces went — and a consumer names the tag (`go get
-github.com/trendvidia/voya/client@v0.2.1`, the version the root requires too).
+github.com/trendvidia/voya/client@v0.3.0`, the version the root requires too).
 
 ## Using voya from a service
 
 > **Getting the module needs a tag.** `go get
-> github.com/trendvidia/voya/client@v0.2.1` resolves `voya/proto` from another
+> github.com/trendvidia/voya/client@v0.3.0` resolves `voya/proto` from another
 > repository as of [#226](https://github.com/trendvidia/voya/issues/226),
 > which tagged it and pointed the require at the tag; `client` carries a tag of
 > its own as of [#231](https://github.com/trendvidia/voya/issues/231). The code

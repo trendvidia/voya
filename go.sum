@@ -57,10 +57,10 @@ github.com/trendvidia/protos v0.1.4 h1:uKa2KUCKDFmAHT0iIuypwoUv+k7dM/u1d1zUWPV00
 github.com/trendvidia/protos v0.1.4/go.mod h1:NPP4w6dOu7BkD8psH0cWJamHHiEpi8QfgP88vKkMXUI=
 github.com/trendvidia/protowire-go v1.13.0 h1:Ody0G05rUqbZ0GuE4gmz+e5sNfYMSlSLEYmZ6xC/QLs=
 github.com/trendvidia/protowire-go v1.13.0/go.mod h1:4Hav/Pn6G1l5Ioj9+LikogO1fImKqDQSgIY1BvF/Ilk=
-github.com/trendvidia/voya/authn v0.1.1 h1:bzr4yuwKTX/S5+R4RmbA95Z/j1ykBGjnjUDK0hgpHFE=
-github.com/trendvidia/voya/authn v0.1.1/go.mod h1:Kdh5wtXFG4Zq6mj9XjCNADwoZ5bfLsViUlBW8LLyK8Q=
-github.com/trendvidia/voya/client v0.2.1 h1:Hjku4llVWfrlTn+aGd2Virt+hUjGfHAvyTK+B7+aS2E=
-github.com/trendvidia/voya/client v0.2.1/go.mod h1:pjLsRUWie8nCuJwRqr+o/qRPPB/s+X49ZLdhUJZlUZI=
+github.com/trendvidia/voya/authn v0.2.0 h1:pW0Qty6peUNx/Lzf/rhRu+JfoTWyk1zNfM7VCnugKLM=
+github.com/trendvidia/voya/authn v0.2.0/go.mod h1:QUE6cKCrw4kDcJseQhAT006pSRbSkAC3u0/07uolEu4=
+github.com/trendvidia/voya/client v0.3.0 h1:k+jqRirWLPg+1EKe7MF/fcE+JHtGGME4bPL5lW+cVZ8=
+github.com/trendvidia/voya/client v0.3.0/go.mod h1:6fhNQ1Xe9gTTiOwksxDXP58fwj5sfvNZwtei6Cm6VNs=
 github.com/trendvidia/voya/proto v0.3.0 h1:Qq5z8RpmAkad6DaWEmfiv3re41UtddaKQZhYgto7qdQ=
 github.com/trendvidia/voya/proto v0.3.0/go.mod h1:farb4V5FpuZE5tGika960zXA6Cc8Zmrbg1czQLz20y0=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=

@@ -10,7 +10,7 @@ require (
 )
 
 require (
-	github.com/trendvidia/voya/proto v0.2.1 // indirect
+	github.com/trendvidia/voya/proto v0.3.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
